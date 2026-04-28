@@ -3,9 +3,43 @@ import pandas as pd
 import json
 import pydeck as pdk
 
-st.set_page_config(layout="wide")
+# =====================
+# PAGE CONFIG
+# =====================
 
-st.title("✈️ Flight Deals Explorer")
+st.set_page_config(
+    layout="centered",
+    page_title="Flight Deals"
+)
+
+st.title("✈️ Flight Deals")
+
+# =====================
+# AIRPORT → CITY MAP
+# =====================
+
+AIRPORT_TO_CITY = {
+    "LHR": "London",
+    "CDG": "Paris",
+    "AMS": "Amsterdam",
+    "FRA": "Frankfurt",
+    "MAD": "Madrid",
+    "BCN": "Barcelona",
+    "DUB": "Dublin",
+    "LIS": "Lisbon",
+    "ZRH": "Zurich",
+    "VIE": "Vienna",
+    "MXP": "Milan",
+    "FCO": "Rome",
+    "CPH": "Copenhagen",
+    "ARN": "Stockholm",
+    "OSL": "Oslo",
+    "HEL": "Helsinki",
+    "BRU": "Brussels",
+    "PRG": "Prague",
+    "BUD": "Budapest",
+    "WAW": "Warsaw"
+}
 
 # =====================
 # LOAD DATA
@@ -19,6 +53,17 @@ usage = raw.get("usage", {"used": 0, "limit": 1})
 
 df = pd.DataFrame(routes)
 
+if df.empty:
+    st.warning("No flight data yet")
+    st.stop()
+
+# =====================
+# ADD CITY NAMES
+# =====================
+
+df["origin_city"] = df["origin"].map(AIRPORT_TO_CITY).fillna(df["origin"])
+df["destination_city"] = df["destination"].map(AIRPORT_TO_CITY).fillna(df["destination"])
+
 # =====================
 # FORMAT DURATION
 # =====================
@@ -26,46 +71,74 @@ df = pd.DataFrame(routes)
 def format_duration(minutes):
     if pd.isna(minutes):
         return "Unknown"
-    hours = int(minutes) // 60
-    mins = int(minutes) % 60
-    return f"{hours}h {mins}m"
+    h = int(minutes) // 60
+    m = int(minutes) % 60
+    return f"{h}h {m}m"
 
 df["duration_str"] = df["duration"].apply(format_duration)
 
 # =====================
-# USAGE
+# DEAL SCORE
 # =====================
 
-st.subheader("📊 API Usage")
+def score_deal(row):
+    score = 0
+
+    if pd.notna(row["price"]):
+        if row["price"] < 500:
+            score += 50
+        elif row["price"] < 650:
+            score += 30
+        elif row["price"] < 800:
+            score += 10
+
+    if pd.notna(row["duration"]):
+        if row["duration"] < 500:
+            score += 20
+        elif row["duration"] < 700:
+            score += 10
+
+    if score >= 60:
+        return "🔥"
+    elif score >= 40:
+        return "💰"
+    elif score >= 20:
+        return "👍"
+    else:
+        return "😐"
+
+df["score"] = df.apply(score_deal, axis=1)
+
+# =====================
+# API USAGE
+# =====================
 
 used = usage["used"]
 limit = usage["limit"]
 pct = used / limit if limit else 0
 
-col1, col2, col3 = st.columns(3)
-col1.metric("Used", used)
-col2.metric("Remaining", limit - used)
-col3.metric("Usage %", f"{pct:.0%}")
-
 st.progress(pct)
+st.caption(f"API usage: {used}/{limit} ({pct:.0%})")
 
 # =====================
 # FILTERS
 # =====================
 
-st.sidebar.header("🔎 Filters")
+with st.expander("🔎 Filters", expanded=False):
 
-origin = st.sidebar.selectbox(
-    "Origin",
-    ["All"] + sorted(df["origin"].dropna().unique())
-)
+    origin = st.selectbox(
+        "Origin",
+        ["All"] + sorted(df["origin_city"].unique())
+    )
 
-airlines = ["All"] + sorted(df["airline"].fillna("Unknown").unique())
-airline_filter = st.sidebar.selectbox("Airline", airlines)
+    airline_filter = st.selectbox(
+        "Airline",
+        ["All"] + sorted(df["airline"].fillna("Unknown").unique())
+    )
 
-max_duration = st.sidebar.slider("Max Duration (mins)", 0, 1500, 800)
+    max_duration = st.slider("Max Duration (mins)", 0, 1500, 800)
 
-date_range = st.sidebar.date_input("Travel Dates", [])
+    date_range = st.date_input("Travel Dates", [])
 
 # =====================
 # APPLY FILTERS
@@ -74,7 +147,7 @@ date_range = st.sidebar.date_input("Travel Dates", [])
 filtered = df.copy()
 
 if origin != "All":
-    filtered = filtered[filtered["origin"] == origin]
+    filtered = filtered[filtered["origin_city"] == origin]
 
 if airline_filter != "All":
     filtered = filtered[
@@ -93,135 +166,92 @@ if len(date_range) == 2:
         (pd.to_datetime(filtered["return"]) <= pd.to_datetime(end))
     ]
 
-# =====================
-# FALLBACK
-# =====================
-
 if filtered.empty:
-    st.warning("⚠️ No results match filters — showing all data")
+    st.warning("No results — showing all")
     filtered = df.copy()
 
 # =====================
 # SUMMARY
 # =====================
 
-st.subheader("📈 Summary")
+st.markdown("### 📊 Summary")
 
-col1, col2, col3 = st.columns(3)
-col1.metric("Routes", len(filtered))
-col2.metric("Cheapest", f"${filtered['price'].min():.0f}")
-col3.metric("Average", f"${filtered['price'].mean():.0f}")
+st.metric("Routes", len(filtered))
 
-# =====================
-# TABLE
-# =====================
-
-st.subheader("🌍 Flight Deals")
-
-display_cols = [
-    "origin",
-    "destination",
-    "price",
-    "airline",
-    "duration_str",
-    "outbound",
-    "return"
-]
-
-st.dataframe(
-    filtered[display_cols].sort_values("price"),
-    use_container_width=True
-)
+if not filtered.empty:
+    st.metric("Cheapest", f"${filtered['price'].min():.0f}")
+    st.metric("Average", f"${filtered['price'].mean():.0f}")
 
 # =====================
-# INTERACTIVE MAP
+# DEAL CARDS
 # =====================
 
-st.subheader("🗺️ Map")
+st.markdown("### 🌍 Top Deals")
+
+top = filtered.sort_values("price").head(10)
+
+for _, row in top.iterrows():
+    st.markdown(f"""
+    ---
+    **{row['score']} {row['origin_city']} → {row['destination_city']}**  
+    💵 ${row['price']}  
+    ✈️ {row['airline'] or 'Unknown'}  
+    ⏱️ {row['duration_str']}  
+    📅 {row['outbound']} → {row['return']}  
+    _(Airport: {row['origin']} → {row['destination']})_
+    """)
+
+# =====================
+# MAP
+# =====================
+
+st.markdown("### 🗺️ Map")
 
 coords = {
-    "LHR": (51.4700, -0.4543),
-    "CDG": (49.0097, 2.5479),
-    "AMS": (52.3105, 4.7683),
-    "FRA": (50.0379, 8.5622),
-    "MAD": (40.4983, -3.5676),
-    "BCN": (41.2974, 2.0833),
-    "DUB": (53.4213, -6.2701),
-    "LIS": (38.7742, -9.1342),
-    "ZRH": (47.4581, 8.5555),
-    "VIE": (48.1103, 16.5697),
-    "MXP": (45.6306, 8.7281),
-    "FCO": (41.8003, 12.2389),
-    "CPH": (55.6181, 12.6560),
-    "ARN": (59.6519, 17.9186),
-    "OSL": (60.1976, 11.1004),
-    "HEL": (60.3172, 24.9633),
-    "BRU": (50.9010, 4.4844),
-    "PRG": (50.1008, 14.2600),
-    "BUD": (47.4369, 19.2556),
-    "WAW": (52.1657, 20.9671),
+    "LHR": (51.47, -0.45),
+    "CDG": (49.01, 2.55),
+    "AMS": (52.31, 4.76),
+    "FRA": (50.03, 8.57),
+    "MAD": (40.49, -3.56),
+    "BCN": (41.30, 2.08),
+    "DUB": (53.42, -6.27),
+    "LIS": (38.77, -9.13),
+    "ZRH": (47.45, 8.56),
+    "VIE": (48.11, 16.57),
+    "MXP": (45.63, 8.72),
+    "FCO": (41.80, 12.25),
+    "CPH": (55.61, 12.65),
+    "ARN": (59.65, 17.91),
+    "OSL": (60.19, 11.10),
+    "HEL": (60.31, 24.96),
+    "BRU": (50.90, 4.48),
+    "PRG": (50.10, 14.26),
+    "BUD": (47.43, 19.25),
+    "WAW": (52.16, 20.96)
 }
 
 map_data = []
 
-for _, row in filtered.iterrows():
+for _, row in top.iterrows():
     if row["destination"] in coords:
         lat, lon = coords[row["destination"]]
         map_data.append({
             "lat": lat,
             "lon": lon,
             "price": row["price"],
-            "destination": row["destination"]
+            "destination": row["destination_city"]
         })
 
 map_df = pd.DataFrame(map_data)
 
 if not map_df.empty:
-    layer = pdk.Layer(
-        "ScatterplotLayer",
-        data=map_df,
-        get_position='[lon, lat]',
-        get_radius=50000,
-        get_fill_color='[200, 30, 0, 160]',
-        pickable=True
-    )
-
-    view_state = pdk.ViewState(latitude=50, longitude=10, zoom=3.5)
-
-    tooltip = {
-        "html": "<b>{destination}</b><br/>Price: ${price}"
-    }
-
-    st.pydeck_chart(pdk.Deck(
-        layers=[layer],
-        initial_view_state=view_state,
-        tooltip=tooltip
-    ))
+    st.map(map_df)
 
 # =====================
-# ROUTE SELECTION
+# CHART
 # =====================
 
-st.subheader("🔍 Explore Route")
+st.markdown("### 📊 Price Chart")
 
 if not filtered.empty:
-    selected = st.selectbox(
-        "Select destination",
-        filtered["destination"].unique()
-    )
-
-    route_df = filtered[filtered["destination"] == selected]
-
-    st.write(route_df[display_cols])
-
-# =====================
-# PRICE TREND
-# =====================
-
-st.subheader("📈 Price Trend (Basic)")
-
-# simulate trend using sorted prices
-trend_df = filtered.sort_values("price")
-
-if not trend_df.empty:
-    st.line_chart(trend_df["price"])
+    st.bar_chart(filtered.set_index("destination_city")["price"])
