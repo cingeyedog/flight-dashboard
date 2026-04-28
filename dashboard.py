@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import json
+import pydeck as pdk
 
 st.set_page_config(layout="wide")
 
@@ -16,26 +17,24 @@ with open("safe_data.json") as f:
 df = pd.DataFrame(data)
 
 if df.empty:
-    st.warning("No data available yet")
+    st.warning("No data available")
     st.stop()
 
 # =====================
-# SIDEBAR FILTERS
+# FILTERS
 # =====================
 
 st.sidebar.header("🔎 Filters")
 
-origins = sorted(df["origin"].unique())
-selected_origin = st.sidebar.selectbox("Origin", ["All"] + origins)
-
+origin = st.sidebar.selectbox("Origin", ["All"] + sorted(df["origin"].unique()))
 max_price = st.sidebar.slider("Max Price ($)", 200, 1500, 800)
 
-filtered_df = df.copy()
+filtered = df.copy()
 
-if selected_origin != "All":
-    filtered_df = filtered_df[filtered_df["origin"] == selected_origin]
+if origin != "All":
+    filtered = filtered[filtered["origin"] == origin]
 
-filtered_df = filtered_df[filtered_df["price"] <= max_price]
+filtered = filtered[filtered["price"] <= max_price]
 
 # =====================
 # METRICS
@@ -43,101 +42,134 @@ filtered_df = filtered_df[filtered_df["price"] <= max_price]
 
 col1, col2, col3 = st.columns(3)
 
-col1.metric("Routes Found", len(filtered_df))
-col2.metric("Cheapest Flight", f"${filtered_df['price'].min():.0f}")
-col3.metric("Average Price", f"${filtered_df['price'].mean():.0f}")
+col1.metric("Routes", len(filtered))
+col2.metric("Cheapest", f"${filtered['price'].min():.0f}")
+col3.metric("Avg", f"${filtered['price'].mean():.0f}")
 
 # =====================
-# DEAL STRENGTH
+# DEAL COLORING
 # =====================
 
-def deal_strength(price):
-    if price < 500:
-        return "🔥 Elite"
-    elif price < 650:
-        return "💰 Great"
-    elif price < 800:
-        return "👍 Good"
+def color_conf(val):
+    if val == "high":
+        return [0, 200, 0]       # green
+    elif val == "medium":
+        return [255, 165, 0]     # orange
     else:
-        return "😐 Normal"
+        return [255, 0, 0]       # red
 
-filtered_df["deal"] = filtered_df["price"].apply(deal_strength)
-
-# =====================
-# TOP DEALS TABLE
-# =====================
-
-st.subheader("🏆 Cheapest Destinations")
-
-top = filtered_df.sort_values("price").head(15)
-
-st.dataframe(top)
+filtered["color"] = filtered["confidence"].apply(color_conf)
 
 # =====================
-# BAR CHART
+# TABLE
+# =====================
+
+st.subheader("🌍 Cheapest Destinations")
+
+st.dataframe(filtered.sort_values("price"))
+
+# =====================
+# CHART
 # =====================
 
 st.subheader("📊 Price Comparison")
 
-chart_df = top.set_index("destination")
-
-st.bar_chart(chart_df["price"])
+st.bar_chart(filtered.set_index("destination")["price"])
 
 # =====================
-# MAP VIEW
+# MAP (INTERACTIVE)
 # =====================
 
-st.subheader("🗺️ Map View")
+st.subheader("🗺️ Interactive Map")
 
-AIRPORT_COORDS = {
-    "LHR": (51.47, -0.45),
-    "CDG": (49.01, 2.55),
-    "AMS": (52.31, 4.76),
-    "FRA": (50.03, 8.57),
-    "MAD": (40.49, -3.56),
-    "BCN": (41.30, 2.08),
-    "DUB": (53.42, -6.27),
-    "LIS": (38.77, -9.13),
-    "ZRH": (47.45, 8.56),
-    "VIE": (48.11, 16.57),
-    "MXP": (45.63, 8.72),
-    "FCO": (41.80, 12.25),
+coords = {
+    "LHR": (51.4700, -0.4543),
+    "CDG": (49.0097, 2.5479),
+    "AMS": (52.3105, 4.7683),
+    "FRA": (50.0379, 8.5622),
+    "MAD": (40.4983, -3.5676),
+    "BCN": (41.2974, 2.0833),
+    "DUB": (53.4213, -6.2701),
+    "LIS": (38.7742, -9.1342),
+    "ZRH": (47.4581, 8.5555),
+    "VIE": (48.1103, 16.5697),
+    "MXP": (45.6306, 8.7281),
+    "FCO": (41.8003, 12.2389),
+    "CPH": (55.6181, 12.6560),
+    "ARN": (59.6519, 17.9186),
+    "OSL": (60.1976, 11.1004),
+    "HEL": (60.3172, 24.9633),
+    "BRU": (50.9010, 4.4844),
+    "PRG": (50.1008, 14.2600),
+    "BUD": (47.4369, 19.2556),
+    "WAW": (52.1657, 20.9671),
 }
 
 map_data = []
 
-for _, row in top.iterrows():
+for _, row in filtered.iterrows():
     dest = row["destination"]
-    if dest in AIRPORT_COORDS:
-        lat, lon = AIRPORT_COORDS[dest]
-        map_data.append({"lat": lat, "lon": lon})
+    if dest in coords:
+        lat, lon = coords[dest]
+        map_data.append({
+            "destination": dest,
+            "price": row["price"],
+            "confidence": row["confidence"],
+            "lat": lat,
+            "lon": lon,
+            "color": row["color"]
+        })
 
-if map_data:
-    st.map(pd.DataFrame(map_data))
+map_df = pd.DataFrame(map_data)
+
+if not map_df.empty:
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=map_df,
+        get_position='[lon, lat]',
+        get_color='color',
+        get_radius=50000,
+        pickable=True
+    )
+
+    view_state = pdk.ViewState(
+        latitude=50,
+        longitude=10,
+        zoom=3.5,
+        pitch=0,
+    )
+
+    tooltip = {
+        "html": "<b>{destination}</b><br/>Price: ${price}<br/>Confidence: {confidence}",
+        "style": {"backgroundColor": "black", "color": "white"}
+    }
+
+    st.pydeck_chart(pdk.Deck(
+        layers=[layer],
+        initial_view_state=view_state,
+        tooltip=tooltip
+    ))
 
 # =====================
-# BEST ORIGIN INSIGHT
+# CLICK-TO-DETAIL (SIMULATED)
 # =====================
 
-st.subheader("🧠 Insights")
+st.subheader("🔍 Explore Route")
 
-best_routes = df.sort_values("price").head(10)
+selected_dest = st.selectbox("Select destination", filtered["destination"].unique())
 
-best_origin = best_routes.groupby("origin")["price"].mean().idxmin()
+route_data = filtered[filtered["destination"] == selected_dest]
 
-st.info(f"💡 Best airport for deals right now: **{best_origin}**")
+st.write(route_data)
 
 # =====================
-# SEARCHABLE TABLE
+# SEARCH
 # =====================
 
-st.subheader("🔍 Explore All Routes")
+st.subheader("🔎 Search")
 
-search = st.text_input("Search destination (e.g. 'PAR', 'LON')")
+search = st.text_input("Search destination")
 
 if search:
-    filtered_df = filtered_df[
-        filtered_df["destination"].str.contains(search.upper())
-    ]
-
-st.dataframe(filtered_df.sort_values("price"))
+    result = filtered[filtered["destination"].str.contains(search.upper())]
+    st.dataframe(result)
