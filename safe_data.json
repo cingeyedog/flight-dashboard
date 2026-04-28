@@ -1,1 +1,1 @@
-[]
+[{"origin": "CLT", "destination": "HEL", "price": 727.0, "confidence": "low"}, {"origin": "GSP", "destination": "WAW", "price": 792.0, "confidence": "low"}, {"origin": "ATL", "destination": "CPH", "price": 800.0, "confidence": "low"}, {"origin": "GSP", "destination": "CDG", "price": 806.0, "confidence": "low"}, {"origin": "ATL", "destination": "BUD", "price": 812.0, "confidence": "low"}, {"origin": "CLT", "destination": "FCO", "price": 877.0, "confidence": "low"}]
