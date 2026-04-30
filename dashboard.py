@@ -38,7 +38,8 @@ AIRPORT_TO_CITY = {
     "BRU": "Brussels",
     "PRG": "Prague",
     "BUD": "Budapest",
-    "WAW": "Warsaw"
+    "WAW": "Warsaw",
+    "ZAG": "Zagreb"
 }
 
 # =====================
